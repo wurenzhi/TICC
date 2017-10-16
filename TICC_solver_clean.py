@@ -1,25 +1,22 @@
 import numpy as np
-from sklearn import mixture
+from sklearn import mixture,metrics
 import collections
 from cvxpy import *
-from snap import *
-import pandas as pd
 import random
 from tgraphvx import TGraphVX
 
 
 class TICC(object):
-    def __init__(self,window_size = 10,num_clusters = 5, lam_sparse = 11e-2, switch_penalty = 400, maxIters = 1000, threshold = 2e-5,seed = 102):
+    def __init__(self,window_size = 10,num_clusters = 5, lam_sparse = 11e-2, switch_penalty = 400, maxIters = 1000,seed = 102):
         self.window_size = window_size
         self.num_clusters = num_clusters
         self.lam_sparse = lam_sparse
         self.switch_penalty = switch_penalty
         self.maxIters = maxIters
-        self.threshold = threshold
-        np.random.seed(seed)
         self.train_cluster_inverse = {}
         self.cluster_mean_stacked_info = {}
         self.computed_covariance = {}
+        np.random.seed(seed)
 
     def fit(self, xtrain, ytrain=None):
         self.xtrain = xtrain
@@ -27,15 +24,21 @@ class TICC(object):
         self.complete_D_train = self.stacked_xtrain()
         self.clustered_points = self.initialize_cluster_with_gmm()
         self.optimize()
-        return self.clustered_points
+        return self.clustered_points, self.train_cluster_inverse
+
+    def get_score(self):
+        if self.ytrain is None:
+            raise Exception('No label specified')
+        return metrics.adjusted_rand_score(self.ytrain[:-self.window_size+1], self.clustered_points)
+
 
 
     def stacked_xtrain(self):
         (m, n) = self.xtrain.shape
-        complete_D_train = np.zeros([m-self.window_size, self.window_size * n])
-        for i in xrange(m-self.window_size):
+        complete_D_train = np.zeros([m-self.window_size+1, self.window_size * n])
+        for i in xrange(m-self.window_size+1):
             for k in xrange(self.window_size):
-                if i + k < m-self.window_size:
+                if i + k < m-self.window_size+1:
                     complete_D_train[i][k * n:(k + 1) * n] = self.xtrain[i + k]
         return complete_D_train
 
@@ -58,6 +61,9 @@ class TICC(object):
         m,n = self.xtrain.shape
         for iters in xrange(self.maxIters):
             print "\n\n\nITERATION ###", iters
+            old_clustered_points = self.clustered_points
+            if self.ytrain is not None:
+                print "score: ", self.get_score()
             train_clusters = self.point_cluster_to_cluster_points(self.clustered_points)
             ##train_clusters holds the indices in complete_D_train
             ##for each of the clusters
@@ -81,6 +87,7 @@ class TICC(object):
                     self.computed_covariance[self.num_clusters, cluster] = cov_out
 #                    cluster_mean_info[self.num_clusters, cluster] = np.mean(D_train, axis=0)[
 #                                                               (self.window_size - 1) * n:self.window_size * n].reshape([1, n])
+
                     self.cluster_mean_stacked_info[self.num_clusters, cluster] = np.mean(D_train, axis=0)
                     self.train_cluster_inverse[cluster] = S_est
 
@@ -105,6 +112,10 @@ class TICC(object):
             self.smoothening()
             for cluster in xrange(self.num_clusters):
                 print "length of cluster #", cluster, "-------->", sum([x == cluster for x in self.clustered_points])
+
+            if np.array_equal(old_clustered_points, self.clustered_points):
+                print "\n\n\n\nCONVERGED!!! BREAKING EARLY!!!"
+                break
 
     def deal_with_empty_clusters(self,cluster, train_clusters, sorted_cluster_norms, old_computed_covariance):
         ##Add a point to the empty clusters
@@ -229,7 +240,8 @@ class TICC(object):
                     LLE_all_points_clusters[point, cluster] = lle
         self.clustered_points = self.updateClusters(LLE_all_points_clusters)
 
-ticc = TICC(window_size = 4,num_clusters = 3, lam_sparse = 11e-2, switch_penalty = 40, maxIters = 2, threshold = 2e-5)
+ticc = TICC(window_size = 6,num_clusters = 3, lam_sparse = 11e-2, switch_penalty = 100, maxIters = 1000)
 Data = np.loadtxt('data.csv', delimiter=",")
-clustered_points = ticc.fit(Data)
-clustered_points
+(cluster_assignment, cluster_MRFs) = ticc.fit(Data[:,:-1],Data[:,-1])
+
+print ticc.get_score()
