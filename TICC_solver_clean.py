@@ -4,10 +4,11 @@ import collections
 from cvxpy import *
 import random
 from tgraphvx import TGraphVX
+import pandas as pd
 
 
 class TICC(object):
-    def __init__(self,window_size = 10,num_clusters = 5, lam_sparse = 11e-2, switch_penalty = 400, maxIters = 1000,seed = 102):
+    def __init__(self,window_size = 10,num_clusters = 5, lam_sparse = 11e-2, switch_penalty = 400, maxIters = 1000):
         self.window_size = window_size
         self.num_clusters = num_clusters
         self.lam_sparse = lam_sparse
@@ -16,22 +17,25 @@ class TICC(object):
         self.train_cluster_inverse = {}
         self.cluster_mean_stacked_info = {}
         self.computed_covariance = {}
-        np.random.seed(seed)
 
-    def fit(self, xtrain, ytrain=None):
-        self.xtrain = xtrain
-        self.ytrain = ytrain
+    def fit(self, dataframe, feature_columns,label_column = None):
+        self.Data = dataframe
+        self.feature_columns = feature_columns
+        self.label_column = label_column
+        self.xtrain = dataframe[feature_columns].values
+        self.ytrain = None
+        if label_column is not None:
+            self.ytrain = dataframe[label_column].values
         self.complete_D_train = self.stacked_xtrain()
-        self.clustered_points = self.initialize_cluster_with_gmm()
-        self.optimize()
+        self.initialize_cluster_with_gmm()
+#        self.optimize()
+        self.clustered_points = self.adjust_predictions()
         return self.clustered_points, self.train_cluster_inverse
 
     def get_score(self):
         if self.ytrain is None:
-            raise Exception('No label specified')
-        return metrics.adjusted_rand_score(self.ytrain[:-self.window_size+1], self.clustered_points)
-
-
+            raise Exception('No labels specified')
+        return metrics.adjusted_rand_score(self.ytrain, self.adjust_predictions(self.clustered_points))
 
     def stacked_xtrain(self):
         (m, n) = self.xtrain.shape
@@ -45,8 +49,7 @@ class TICC(object):
     def initialize_cluster_with_gmm(self):
         gmm = mixture.GaussianMixture(n_components=self.num_clusters, covariance_type="full")
         gmm.fit(self.complete_D_train)
-        clustered_points = gmm.predict(self.complete_D_train)
-        return clustered_points
+        self.clustered_points = gmm.predict(self.complete_D_train)
 
     def point_cluster_to_cluster_points(self,clustered_points):
         train_clusters = collections.defaultdict(list)
@@ -152,6 +155,25 @@ class TICC(object):
         A = np.asarray((A + A.T) - np.diag(temp))
         return A
 
+    def adjust_predictions(self, shift = None):
+        '''
+        fill in missing values due to window
+        shift predictions
+
+        :param shift: Optional - integer
+        :return: adjusted predictions
+        '''
+        preds = self.clustered_points
+        m, _ = self.xtrain.shape
+        if shift is None:
+            shift = self.window_size/2
+        head = [preds[0]]*shift
+        tail = [preds[-1]]*self.window_size
+        preds = np.append(head,preds)
+        preds = np.append(preds,tail)
+        return preds[:m]
+
+
     def updateClusters(self, LLE_node_vals):
         """
         Takes in LLE_node_vals matrix and computes the path that minimizes
@@ -240,8 +262,11 @@ class TICC(object):
                     LLE_all_points_clusters[point, cluster] = lle
         self.clustered_points = self.updateClusters(LLE_all_points_clusters)
 
-ticc = TICC(window_size = 6,num_clusters = 3, lam_sparse = 11e-2, switch_penalty = 100, maxIters = 1000)
-Data = np.loadtxt('data.csv', delimiter=",")
-(cluster_assignment, cluster_MRFs) = ticc.fit(Data[:,:-1],Data[:,-1])
 
-print ticc.get_score()
+if __name__ == '__main__':
+    ticc = TICC(window_size = 6,num_clusters = 3, lam_sparse = 11e-2, switch_penalty = 100, maxIters = 1000)
+    Data = pd.read_csv('data_train.csv', parse_dates=True, index_col='Timestamp')
+    feature_columns = Data.columns[:-1]
+    label_column = Data.columns[-1]
+    (cluster_assignment, cluster_MRFs) = ticc.fit(Data, feature_columns,label_column)
+    print cluster_assignment, cluster_MRFs
