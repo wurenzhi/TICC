@@ -26,10 +26,11 @@ class TICC(object):
         self.ytrain = None
         if label_column is not None:
             self.ytrain = dataframe[label_column].values
+
         self.complete_D_train = self.stacked_xtrain()
         self.initialize_cluster_with_gmm()
-#        self.optimize()
-        self.clustered_points = self.adjust_predictions()
+        self.optimize()
+        self.clustered_points = self.adjust_predictions(self.clustered_points)
         return self.clustered_points, self.train_cluster_inverse
 
     def get_score(self):
@@ -155,7 +156,7 @@ class TICC(object):
         A = np.asarray((A + A.T) - np.diag(temp))
         return A
 
-    def adjust_predictions(self, shift = None):
+    def adjust_predictions(self, preds, shift = None):
         '''
         fill in missing values due to window
         shift predictions
@@ -163,7 +164,6 @@ class TICC(object):
         :param shift: Optional - integer
         :return: adjusted predictions
         '''
-        preds = self.clustered_points
         m, _ = self.xtrain.shape
         if shift is None:
             shift = self.window_size/2
